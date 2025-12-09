@@ -103,7 +103,6 @@ class SDFNetwork(nn.Module):
 
     def forward(self, inputs, step):
         scaled_inputs = inputs * self.scale
-        feature = 0.
 
         if self.embed_fn_fine is not None:
             embedded_inputs = self.embed_fn_fine(scaled_inputs)
@@ -111,9 +110,10 @@ class SDFNetwork(nn.Module):
             embedded_inputs = scaled_inputs
 
         if self.use_point_transformer:
-            pt_feats_in = torch.cat((scaled_inputs, embedded_inputs), dim=-1)
+            pt_coord = scaled_inputs.detach()
+            pt_feats_in = torch.cat((pt_coord, embedded_inputs.detach()), dim=-1)
             point_dict = {
-                'coord': scaled_inputs,
+                'coord': pt_coord,
                 'grid_size': self.point_transformer_grid_size,
                 'offset': scaled_inputs.new_tensor([scaled_inputs.shape[0]], dtype=torch.long),
                 'feat': pt_feats_in,
@@ -121,11 +121,12 @@ class SDFNetwork(nn.Module):
             transformer_out = self.point_transformer(point_dict)
             embedded_inputs = torch.cat((embedded_inputs, transformer_out['feat']), dim=-1)
 
+        feature = 0.
         if self.use_plane_feature:
-            feature += self.plane_encoding(embedded_inputs[...,:3], step)
+            feature += self.plane_encoding(scaled_inputs, step)
 
         if self.use_grid_feature:
-            feature += self.grid_encoding(embedded_inputs[...,:3], step)
+            feature += self.grid_encoding(scaled_inputs, step)
 
         if self.use_plane_feature or self.use_grid_feature:
             embedded_inputs = torch.cat((embedded_inputs, feature), dim=-1)
