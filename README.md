@@ -16,6 +16,7 @@ trimesh
 mcubes
 open3d
 fpsample
+tinycudann  (install via `pip install -e ./tiny-cuda-nn`)
 ```
 In addition, you also need to install some C++ libraries.  
 ```
@@ -24,6 +25,8 @@ CGAL
 boost
 libgmp-dev
 ```
+
+> **Hash encoding dependency**: The SDF/VG networks now rely on [tiny-cuda-nn](https://github.com/NVlabs/tiny-cuda-nn). Clone it next to this repo and run `pip install -e ./tiny-cuda-nn` (or install the published wheel) before training so that the `tinycudann` Python module is available.
 
 ## Compiling
 Before starting, you need to compile several C++ programs.  

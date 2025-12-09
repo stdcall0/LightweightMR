@@ -19,6 +19,8 @@ class SDFNetwork(nn.Module):
                  weight_norm=True,
                  use_plane_feature=False,
                  use_grid_feature=False,
+                 use_point_transformer=False,
+                 point_transformer_grid_size=0.01,
                  inside_outside=False):
         super(SDFNetwork, self).__init__()
 
@@ -29,6 +31,26 @@ class SDFNetwork(nn.Module):
             embed_fn, input_ch = get_embedder(multires, input_dims=d_in)
             self.embed_fn_fine = embed_fn
             dims[0] = input_ch
+
+        base_feat_dim = dims[0]
+
+        self.coord_dim = d_in
+        self.use_point_transformer = use_point_transformer
+        self.point_transformer_grid_size = point_transformer_grid_size
+        self.point_transformer_out_dim = 0
+        if self.use_point_transformer:
+            try:
+                from models.modules.PointTransformerv3 import PointTransformerV3
+            except ImportError as err:
+                raise ImportError(
+                    "PointTransformerV3 requires spconv/flash-attn dependencies. "
+                    "Install them or set use_point_transformer=False."
+                ) from err
+
+            pt_in_channels = base_feat_dim + d_in
+            self.point_transformer = PointTransformerV3(in_channels=pt_in_channels)
+            self.point_transformer_out_dim = 64
+            dims[0] += self.point_transformer_out_dim
 
         self.use_grid_feature = use_grid_feature
         if self.use_grid_feature:
@@ -80,26 +102,39 @@ class SDFNetwork(nn.Module):
         self.activation = nn.ReLU()
 
     def forward(self, inputs, step):
-        inputs = inputs * self.scale
+        scaled_inputs = inputs * self.scale
         feature = 0.
 
         if self.embed_fn_fine is not None:
-            inputs = self.embed_fn_fine(inputs)
+            embedded_inputs = self.embed_fn_fine(scaled_inputs)
+        else:
+            embedded_inputs = scaled_inputs
+
+        if self.use_point_transformer:
+            pt_feats_in = torch.cat((scaled_inputs, embedded_inputs), dim=-1)
+            point_dict = {
+                'coord': scaled_inputs,
+                'grid_size': self.point_transformer_grid_size,
+                'offset': scaled_inputs.new_tensor([scaled_inputs.shape[0]], dtype=torch.long),
+                'feat': pt_feats_in,
+            }
+            transformer_out = self.point_transformer(point_dict)
+            embedded_inputs = torch.cat((embedded_inputs, transformer_out['feat']), dim=-1)
 
         if self.use_plane_feature:
-            feature += self.plane_encoding(inputs[...,:3], step)
+            feature += self.plane_encoding(embedded_inputs[...,:3], step)
 
         if self.use_grid_feature:
-            feature += self.grid_encoding(inputs[...,:3], step)
+            feature += self.grid_encoding(embedded_inputs[...,:3], step)
 
         if self.use_plane_feature or self.use_grid_feature:
-            inputs = torch.cat((inputs, feature), dim=-1)
+            embedded_inputs = torch.cat((embedded_inputs, feature), dim=-1)
 
-        x = inputs
+        x = embedded_inputs
         for l in range(0, self.num_layers - 1):
             lin = getattr(self, "lin" + str(l))
             if l in self.skip_in:
-                x = torch.cat([x, inputs], 1) / np.sqrt(2)
+                x = torch.cat([x, embedded_inputs], 1) / np.sqrt(2)
 
             x = lin(x)
             if l < self.num_layers - 2:
