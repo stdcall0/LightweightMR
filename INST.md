@@ -38,8 +38,8 @@ make
 cd ../../..
 conda activate LMR
 
-# exec once
-#conda install -c conda-forge libstdcxx-ng
+# exec once (let open3d use system libstdc++)
+#conda install -c conda-forge libstdcxx-ng (this not works for some reason)
 ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /environment/miniconda3/lib/libstdc++.so.6
 
 # Run eval (with optimizations)
