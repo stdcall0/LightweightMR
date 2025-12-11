@@ -110,33 +110,45 @@ class SDFNetwork(nn.Module):
             embedded_inputs = scaled_inputs
 
         if self.use_point_transformer:
-            pt_coord = scaled_inputs.detach()
+            # Skip transformer when point count is too small (spconv may fail to tune/launch)
+            if scaled_inputs.shape[0] < 4:
+                pass
+            else:
+                pt_coord = scaled_inputs.detach()
 
-            # Sanitize coords/features to avoid spconv/BN crashes (NaN/Inf/overflow)
-            pt_coord = torch.nan_to_num(pt_coord, nan=0.0, posinf=10.0, neginf=-10.0)
-            pt_coord = torch.clamp(pt_coord, min=-1000.0, max=1000.0)
+                # Sanitize coords/features to avoid spconv/BN crashes (NaN/Inf/overflow)
+                pt_coord = torch.nan_to_num(pt_coord, nan=0.0, posinf=10.0, neginf=-10.0)
+                pt_coord = torch.clamp(pt_coord, min=-1000.0, max=1000.0)
 
-            pt_feats_in = torch.cat((pt_coord, embedded_inputs.detach()), dim=-1)
-            pt_feats_in = torch.nan_to_num(pt_feats_in, nan=0.0, posinf=1.0, neginf=-1.0)
+                pt_feats_in = torch.cat((pt_coord, embedded_inputs.detach()), dim=-1)
+                pt_feats_in = torch.nan_to_num(pt_feats_in, nan=0.0, posinf=1.0, neginf=-1.0)
 
-            point_dict = {
-                'coord': pt_coord,
-                'grid_size': self.point_transformer_grid_size,
-                'offset': scaled_inputs.new_tensor([scaled_inputs.shape[0]], dtype=torch.long),
-                'feat': pt_feats_in,
-            }
+                point_dict = {
+                    'coord': pt_coord,
+                    'grid_size': self.point_transformer_grid_size,
+                    'offset': scaled_inputs.new_tensor([scaled_inputs.shape[0]], dtype=torch.long),
+                    'feat': pt_feats_in,
+                }
 
-            # Force PointTransformer into eval to freeze BN when point count is small
-            was_training = self.point_transformer.training
-            if was_training:
-                self.point_transformer.eval()
+                # Force PointTransformer into eval to freeze BN when point count is small
+                was_training = self.point_transformer.training
+                if was_training:
+                    self.point_transformer.eval()
 
-            transformer_out = self.point_transformer(point_dict)
+                try:
+                    transformer_out = self.point_transformer(point_dict)
+                    embedded_inputs = torch.cat((embedded_inputs, transformer_out['feat']), dim=-1)
+                except RuntimeError as err:
+                    # If spconv cannot find an algorithm (often when too few/degenerate points), skip transformer
+                    if "ConvTunerSimple_tune_and_cache" in str(err) or "can't find suitable algorithm" in str(err):
+                        pass
+                    else:
+                        if was_training:
+                            self.point_transformer.train()
+                        raise
 
-            if was_training:
-                self.point_transformer.train()
-
-            embedded_inputs = torch.cat((embedded_inputs, transformer_out['feat']), dim=-1)
+                if was_training:
+                    self.point_transformer.train()
 
         feature = None
         if self.use_plane_feature:
