@@ -9,23 +9,9 @@ EXP_DIR=./example/exp/
 run_with_timing() {
     local desc="$1"; shift
     local start=$(date +%s)
-    local tmp_log=$(mktemp)
-    /usr/bin/env time -f "%e %P %M" "$@" 2> "$tmp_log"
+    /usr/bin/env time -f "[time] %e s elapsed | CPU %P | MaxRSS %M KB" "$@"
     exit_code=$?
     local end=$(date +%s)
-    read elapsed cpu rss_kb < "$tmp_log"
-    rm -f "$tmp_log"
-    # Convert KB -> MiB for readability.
-    rss_mib=$(python - <<PY
-import math
-try:
-    v = float("${rss_kb:-0}")
-    print(f"{v/1024:.2f}")
-except Exception:
-    print("0.00")
-PY
-)
-    echo "[time] ${elapsed} s elapsed | CPU ${cpu} | MaxRSS ${rss_mib} MiB (${rss_kb} KB)"
     echo "[wall] ${desc} took $((end-start)) s (exit $exit_code)"
     return $exit_code
 }
