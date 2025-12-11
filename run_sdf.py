@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import time
-import sys
 import torch
 import torch.nn.functional as F
-from torch.cuda.amp.autocast_mode import autocast
-from torch.cuda.amp.grad_scaler import GradScaler
 from tqdm import tqdm
 from models.dataset import DatasetNP
 from models.sdfnet import SDFNetwork
@@ -20,15 +17,12 @@ import models.losses as losses
 import math
 import mcubes
 import warnings
-import warnings
 
 warnings.filterwarnings("ignore")
 
 class Runner:
-    def __init__(self, args, conf_path, mode='train', checkpoint_name=None, use_amp=True):
+    def __init__(self, args, conf_path, mode='train', checkpoint_name=None):
         self.device = torch.device('cuda')
-        self.use_amp = use_amp
-        self.scaler = GradScaler(enabled=self.use_amp)
 
         # Configuration
         self.conf_path = conf_path
@@ -83,72 +77,62 @@ class Runner:
         loss_w = self.conf.get_list("train.loss_weight")
         model_type = self.conf.get("dataset.type")
         res_step = self.maxiter - self.iter_step
-        try:
-            try:
-                for iter_i in tqdm(range(res_step)):
-                    self.update_learning_rate_np(iter_i)
+        for iter_i in tqdm(range(res_step)):
+            self.update_learning_rate_np(iter_i)
 
-                    with autocast(enabled=self.use_amp):
-                        sample_near, points_near, normals_near, sample_uniform, points_uniform, normals_uniform, point_gt = self.dataset_np.sdf_train_data(batch_size, self.iter_step, model_type)
-                        # queries
-                        samples = torch.cat((sample_near, sample_uniform), dim=0)
-                        gradients_samples, sdf_samples = self.sdf_network.gradient(samples, self.iter_step)
-                        gradients_samples_norm = F.normalize(gradients_samples, dim=-1)
-                        samples_moved = samples - gradients_samples_norm * sdf_samples
+            sample_near, points_near, normals_near, sample_uniform, points_uniform, normals_uniform, point_gt = self.dataset_np.sdf_train_data(batch_size, self.iter_step, model_type)
+            # queries
+            samples = torch.cat((sample_near, sample_uniform), dim=0)
+            gradients_samples, sdf_samples = self.sdf_network.gradient(samples, self.iter_step)
+            gradients_samples_norm = F.normalize(gradients_samples, dim=-1)
+            samples_moved = samples - gradients_samples_norm * sdf_samples
 
-                        # Gradient Consistency loss
-                        move_position = samples_moved.detach()
-                        gradients_samples_moved, _ = self.sdf_network.gradient(move_position, self.iter_step)
-                        gradients_samples_moved_norm = F.normalize(gradients_samples_moved, dim=-1)
-                        loss_grad_consis = (1 - F.cosine_similarity(gradients_samples_moved_norm, gradients_samples_norm, dim=-1)).mean()
+            # Gradient Consistency loss
+            move_position = samples_moved.detach()
+            gradients_samples_moved, _ = self.sdf_network.gradient(move_position, self.iter_step)
+            gradients_samples_moved_norm = F.normalize(gradients_samples_moved, dim=-1)
+            loss_grad_consis = (1 - F.cosine_similarity(gradients_samples_moved_norm, gradients_samples_norm, dim=-1)).mean()
 
-                        # points
-                        points = torch.cat((points_near, points_uniform), dim=0)
-                        points_ = points.clone() if self.dataset_knn == 1 else points[:,0,:]
-                        sdf_points = self.sdf_network.sdf(points_, self.iter_step)
+            # points
+            points = torch.cat((points_near, points_uniform), dim=0)
+            points_ = points.clone() if self.dataset_knn == 1 else points[:,0,:]
+            sdf_points = self.sdf_network.sdf(points_, self.iter_step)
 
-                        # loss
-                        if self.dataset_knn == 1:
-                            loss_pull = torch.linalg.norm((points - samples_moved), ord=2, dim=-1).mean()
-                        else:
-                            loss_pull = losses.pull_knn_loss(points, samples_moved, samples)
-                        loss_sdf = torch.abs(sdf_points).mean()
-                        loss_inter = torch.exp(-1e2 * torch.abs(sdf_samples)).mean()
-                        if normals_near is not None and normals_uniform is not None:
-                            normals_gt = torch.cat((normals_near, normals_uniform), dim=0)
-                            loss_normal = (1 - F.cosine_similarity(normals_gt, gradients_samples, dim=-1)).mean()
-                        else:
-                            loss_normal = torch.zeros((1,), device=loss_sdf.device)
+            # loss
+            if self.dataset_knn == 1:
+                loss_pull = torch.linalg.norm((points - samples_moved), ord=2, dim=-1).mean()
+            else:
+                loss_pull = losses.pull_knn_loss(points, samples_moved, samples)
+            loss_sdf = torch.abs(sdf_points).mean()
+            loss_inter = torch.exp(-1e2 * torch.abs(sdf_samples)).mean()
+            if normals_near is not None and normals_uniform is not None:
+                normals_gt = torch.cat((normals_near, normals_uniform), dim=0)
+                loss_normal = (1 - F.cosine_similarity(normals_gt, gradients_samples, dim=-1)).mean()
+            else:
+                loss_normal = torch.zeros((1,), device=loss_sdf.device)
 
-                        # total loss
-                        loss = loss_w[0]*loss_pull + loss_w[1]*loss_sdf + loss_w[2]*loss_grad_consis + loss_w[3]*loss_inter + 0.01*loss_normal
+            # total loss
+            loss = loss_w[0]*loss_pull + loss_w[1]*loss_sdf + loss_w[2]*loss_grad_consis + loss_w[3]*loss_inter + 0.01*loss_normal
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
-                    self.optimizer.zero_grad()
-                    self.scaler.scale(loss).backward()
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+            self.iter_step += 1
+            if self.iter_step % self.report_freq == 0:
+                print_log('iter:{:8>d} loss = {} lr={}'.format(self.iter_step, loss, self.optimizer.param_groups[0]['lr']), logger=logger)
 
-                    self.iter_step += 1
-                    if self.iter_step % self.report_freq == 0:
-                        print_log('iter:{:8>d} loss = {} lr={}'.format(self.iter_step, loss, self.optimizer.param_groups[0]['lr']), logger=logger)
+            if self.iter_step % self.val_freq == 0 and self.iter_step != 0:
+                self.validate_mesh(resolution=512, threshold=0.0, real_world=True)
 
-                    if self.iter_step % self.val_freq == 0 and self.iter_step != 0:
-                        self.validate_mesh(resolution=512, threshold=0.0, real_world=True)
+            if self.iter_step % self.save_freq == 0 and self.iter_step != 0:
+                self.save_checkpoint()
 
-                    if self.iter_step % self.save_freq == 0 and self.iter_step != 0:
-                        self.save_checkpoint()
-            except Exception as exc:
-                print_log(f"Fatal error at iter {self.iter_step}: {exc}", logger=logger)
-                raise
-        except Exception as exc:
-            print_log(f"Fatal error at iter {self.iter_step}: {exc}", logger=logger)
-            raise
-        finally:
-            if torch.cuda.is_available():
-                peak_bytes = torch.cuda.max_memory_allocated(self.device)
-                peak_reserved = torch.cuda.max_memory_reserved(self.device)
-                msg = f"Peak CUDA memory — allocated: {peak_bytes/1024/1024:.2f} MiB, reserved: {peak_reserved/1024/1024:.2f} MiB"
-                print_log(msg, logger=logger if 'logger' in locals() else None)
+        # Log peak CUDA memory usage.
+        if torch.cuda.is_available():
+            peak_bytes = torch.cuda.max_memory_allocated(self.device)
+            peak_reserved = torch.cuda.max_memory_reserved(self.device)
+            msg = f"Peak CUDA memory — allocated: {peak_bytes/1024/1024:.2f} MiB, reserved: {peak_reserved/1024/1024:.2f} MiB"
+            print_log(msg, logger=logger)
 
     def validate_gradient(self, real_world=True, sdf_level=0.):
         N = 500_000
@@ -263,25 +247,17 @@ if __name__ == '__main__':
     parser.add_argument('--expdir', type=str, default='./example/exp/')
     parser.add_argument('--dataname', type=str, default='47984')
     parser.add_argument('--checkpoint_name', type=str, default=None)
-    parser.add_argument('--opt_perf', type=str, default='on', choices=['on', 'off'], help='Enable perf optimizations (AMP, cudnn benchmark, matmul high).')
     args = parser.parse_args()
-
-    use_opt = args.opt_perf == 'on'
-    torch.backends.cudnn.benchmark = use_opt
-    torch.set_float32_matmul_precision('high' if use_opt else 'highest')
 
     setup_seed(123456)
     torch.cuda.set_device(args.gpu)
-    try:
-        runner = Runner(args, args.conf, args.mode, args.checkpoint_name, use_amp=use_opt)
+    runner = Runner(args, args.conf, args.mode, args.checkpoint_name)
 
-        if args.mode == 'train':
-            runner.train()
-        elif args.mode == 'validate_mesh':
-            threshs = [-0.001, 0.0]
-            for thresh in threshs:
-                runner.validate_mesh(resolution=32, threshold=thresh, real_world=True)
-        elif args.mode == 'validate_gradient':
-            runner.validate_gradient(real_world=True, sdf_level=0.0)
-    except Exception:
-        sys.exit(1)
+    if args.mode == 'train':
+        runner.train()
+    elif args.mode == 'validate_mesh':
+        threshs = [-0.001, 0.0]
+        for thresh in threshs:
+            runner.validate_mesh(resolution=32, threshold=thresh, real_world=True)
+    elif args.mode == 'validate_gradient':
+        runner.validate_gradient(real_world=True, sdf_level=0.0)

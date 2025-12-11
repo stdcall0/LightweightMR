@@ -1,7 +1,5 @@
-from typing import List
 import torch
 import torch.nn as nn
-from torch.nn.utils.weight_norm import weight_norm as weight_norm_fn
 import numpy as np
 from models.modules.embedder import get_embedder
 from models.modules.triplane import Hash_triplane, Hash_grid
@@ -21,23 +19,17 @@ class SDFNetwork(nn.Module):
                  weight_norm=True,
                  use_plane_feature=False,
                  use_grid_feature=False,
-                 inside_outside=False,
-                 use_point_transformer=False,
-                 point_transformer_grid_size=0.01):
+                 inside_outside=False):
         super(SDFNetwork, self).__init__()
 
-        # Avoid shadowing torch.nn.utils.weight_norm
-        use_weight_norm_flag = weight_norm
-
-        dims: List[int] = [d_in] + [d_hidden for _ in range(n_layers)] + [d_out]
+        dims = [d_in] + [d_hidden for _ in range(n_layers)] + [d_out]
 
         self.embed_fn_fine = None
         if multires > 0:
             embed_fn, input_ch = get_embedder(multires, input_dims=d_in)
             self.embed_fn_fine = embed_fn
-            dims[0] = int(input_ch)
+            dims[0] = input_ch
 
-        # Point transformer branch was removed; keep flags for config compatibility.
         self.use_grid_feature = use_grid_feature
         if self.use_grid_feature:
             self.grid_encoding = Hash_grid(point_size=point_size, use_pro=True)
@@ -47,7 +39,7 @@ class SDFNetwork(nn.Module):
             self.plane_encoding = Hash_triplane(point_size=point_size, multires=multires, use_pro=True)
 
         if self.use_grid_feature or self.use_plane_feature:
-            dims[0] = int(dims[0] + 16 * 2)
+            dims[0] += 16*2
 
         self.num_layers = len(dims)
         self.skip_in = skip_in
@@ -81,28 +73,26 @@ class SDFNetwork(nn.Module):
                     torch.nn.init.constant_(lin.bias, 0.0)
                     torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
 
-            if use_weight_norm_flag:
-                lin = weight_norm_fn(lin)
+            if weight_norm:
+                lin = nn.utils.weight_norm(lin)
             setattr(self, "lin" + str(l), lin)
             
         self.activation = nn.ReLU()
 
     def forward(self, inputs, step):
         inputs = inputs * self.scale
-        feature = None
+        feature = 0.
 
         if self.embed_fn_fine is not None:
             inputs = self.embed_fn_fine(inputs)
 
         if self.use_plane_feature:
-            feat_plane = self.plane_encoding(inputs[...,:3], step)
-            feature = feat_plane if feature is None else feature + feat_plane
+            feature += self.plane_encoding(inputs[...,:3], step)
 
         if self.use_grid_feature:
-            feat_grid = self.grid_encoding(inputs[...,:3], step)
-            feature = feat_grid if feature is None else feature + feat_grid
+            feature += self.grid_encoding(inputs[...,:3], step)
 
-        if feature is not None:
+        if self.use_plane_feature or self.use_grid_feature:
             inputs = torch.cat((inputs, feature), dim=-1)
 
         x = inputs
