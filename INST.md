@@ -37,7 +37,10 @@ cmake .
 make
 cd ../../..
 conda activate LMR
-conda install -c conda-forge libstdcxx-ng
+
+# exec once
+#conda install -c conda-forge libstdcxx-ng
+ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /environment/miniconda3/lib/libstdc++.so.6
 
 # Run eval (with measurements)
 source scripts/run_sdf.sh

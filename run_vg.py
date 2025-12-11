@@ -24,9 +24,10 @@ from shutil import copyfile
 warnings.filterwarnings("ignore")
 
 class Runner:
-    def __init__(self, args, conf_path, mode='train', checkpoint_name=None):
+    def __init__(self, args, conf_path, mode='train', checkpoint_name=None, use_amp=True):
         self.device = torch.device('cuda')
-        self.scaler = GradScaler(enabled=True)
+        self.use_amp = use_amp
+        self.scaler = GradScaler(enabled=self.use_amp)
 
         # Configuration
         self.conf_path = conf_path
@@ -127,7 +128,7 @@ class Runner:
         for iter_i in tqdm(range(res_step)):
             # self.update_learning_rate_np(iter_i)
 
-            with autocast():
+            with autocast(enabled=self.use_amp):
                 generated_vertices_ = self.vg_network(sample_points, sample_normal, self.iter_step)
                 vertices_grad, _ = self.sdf_network.gradient(generated_vertices_, self.sdf_iter_step)
 
@@ -279,8 +280,6 @@ def _pick_device(requested: int) -> int:
 
 if __name__ == '__main__':
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
-    torch.backends.cudnn.benchmark = True
-    torch.set_float32_matmul_precision('high')
     parser = argparse.ArgumentParser()
     parser.add_argument('--conf', type=str, default='./confs/vg.conf')
     parser.add_argument('--mode', type=str, default='train')
@@ -292,14 +291,19 @@ if __name__ == '__main__':
     parser.add_argument('--dataname', type=str, default='47984')
     parser.add_argument('--subdatadir', type=str, default='VG')
     parser.add_argument('--checkpoint_name', type=str, default=None)
+    parser.add_argument('--opt_perf', type=str, default='on', choices=['on', 'off'], help='Enable perf optimizations (AMP, cudnn benchmark, matmul high).')
     args = parser.parse_args()
+
+    use_opt = args.opt_perf == 'on'
+    torch.backends.cudnn.benchmark = use_opt
+    torch.set_float32_matmul_precision('high' if use_opt else 'highest')
 
     setup_seed(266815867)
     gpu_index = _pick_device(args.gpu)
     print(f"Using CUDA device {gpu_index} / {torch.cuda.device_count()-1}")
     torch.cuda.set_device(gpu_index)
     try:
-        runner = Runner(args, args.conf, args.mode, args.checkpoint_name)
+        runner = Runner(args, args.conf, args.mode, args.checkpoint_name, use_amp=use_opt)
 
         if args.mode == 'train':
             runner.train()

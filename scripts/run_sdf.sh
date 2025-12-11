@@ -1,6 +1,7 @@
 GPU_IDX=0
 SUBDARADIR=SDF
 SDF_CHECKPOINT=ckpt_020000.pth
+OPT_PERF=${OPT_PERF:-on}
 
 DATA_DIR=./example/data/
 EXP_DIR=./example/exp/
@@ -17,6 +18,6 @@ run_with_timing() {
 
 for SCAN in "47984" "44234" "354371"; do
     CONF=./confs/sdf.conf
-    run_with_timing "sdf-train $SCAN" python run_sdf.py --conf $CONF --mode train --subdatadir $SUBDARADIR --datadir $DATA_DIR --expdir $EXP_DIR --dataname $SCAN --gpu $GPU_IDX
-    run_with_timing "sdf-validate $SCAN" python run_sdf.py --conf $CONF --mode validate_mesh --subdatadir $SUBDARADIR --datadir $DATA_DIR --expdir $EXP_DIR --dataname $SCAN --gpu $GPU_IDX --checkpoint_name $SDF_CHECKPOINT
+    run_with_timing "sdf-train $SCAN" python run_sdf.py --conf $CONF --mode train --subdatadir $SUBDARADIR --datadir $DATA_DIR --expdir $EXP_DIR --dataname $SCAN --gpu $GPU_IDX --opt_perf $OPT_PERF
+    run_with_timing "sdf-validate $SCAN" python run_sdf.py --conf $CONF --mode validate_mesh --subdatadir $SUBDARADIR --datadir $DATA_DIR --expdir $EXP_DIR --dataname $SCAN --gpu $GPU_IDX --checkpoint_name $SDF_CHECKPOINT --opt_perf $OPT_PERF
 done

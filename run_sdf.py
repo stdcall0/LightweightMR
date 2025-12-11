@@ -25,9 +25,10 @@ import warnings
 warnings.filterwarnings("ignore")
 
 class Runner:
-    def __init__(self, args, conf_path, mode='train', checkpoint_name=None):
+    def __init__(self, args, conf_path, mode='train', checkpoint_name=None, use_amp=True):
         self.device = torch.device('cuda')
-        self.scaler = GradScaler(enabled=True)
+        self.use_amp = use_amp
+        self.scaler = GradScaler(enabled=self.use_amp)
 
         # Configuration
         self.conf_path = conf_path
@@ -87,7 +88,7 @@ class Runner:
                 for iter_i in tqdm(range(res_step)):
                     self.update_learning_rate_np(iter_i)
 
-                    with autocast():
+                    with autocast(enabled=self.use_amp):
                         sample_near, points_near, normals_near, sample_uniform, points_uniform, normals_uniform, point_gt = self.dataset_np.sdf_train_data(batch_size, self.iter_step, model_type)
                         # queries
                         samples = torch.cat((sample_near, sample_uniform), dim=0)
@@ -253,8 +254,6 @@ class Runner:
 
 if __name__ == '__main__':
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
-    torch.backends.cudnn.benchmark = True
-    torch.set_float32_matmul_precision('high')
     parser = argparse.ArgumentParser()
     parser.add_argument('--conf', type=str, default='./confs/sdf.conf')
     parser.add_argument('--mode', type=str, default='train')
@@ -264,12 +263,17 @@ if __name__ == '__main__':
     parser.add_argument('--expdir', type=str, default='./example/exp/')
     parser.add_argument('--dataname', type=str, default='47984')
     parser.add_argument('--checkpoint_name', type=str, default=None)
+    parser.add_argument('--opt_perf', type=str, default='on', choices=['on', 'off'], help='Enable perf optimizations (AMP, cudnn benchmark, matmul high).')
     args = parser.parse_args()
+
+    use_opt = args.opt_perf == 'on'
+    torch.backends.cudnn.benchmark = use_opt
+    torch.set_float32_matmul_precision('high' if use_opt else 'highest')
 
     setup_seed(123456)
     torch.cuda.set_device(args.gpu)
     try:
-        runner = Runner(args, args.conf, args.mode, args.checkpoint_name)
+        runner = Runner(args, args.conf, args.mode, args.checkpoint_name, use_amp=use_opt)
 
         if args.mode == 'train':
             runner.train()
