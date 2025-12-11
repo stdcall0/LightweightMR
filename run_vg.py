@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 
 import os
+import os
 import time
+import sys
 import torch
 import torch.nn.functional as F
+from torch.cuda.amp import autocast, GradScaler
 import argparse
 from pyhocon import ConfigFactory
 import numpy as np
@@ -24,6 +27,7 @@ warnings.filterwarnings("ignore")
 class Runner:
     def __init__(self, args, conf_path, mode='train', checkpoint_name=None):
         self.device = torch.device('cuda')
+        self.scaler = GradScaler(enabled=True)
 
         # Configuration
         self.conf_path = conf_path
@@ -120,14 +124,16 @@ class Runner:
         for iter_i in tqdm(range(res_step)):
             # self.update_learning_rate_np(iter_i)
 
-            generated_vertices_ = self.vg_network(sample_points, sample_normal, self.iter_step)
-            vertices_grad, _ = self.sdf_network.gradient(generated_vertices_, self.sdf_iter_step)
+            with autocast():
+                generated_vertices_ = self.vg_network(sample_points, sample_normal, self.iter_step)
+                vertices_grad, _ = self.sdf_network.gradient(generated_vertices_, self.sdf_iter_step)
 
-            loss = losses.cal_vg_loss(point_gt, normal_gt, curvature_surface, generated_vertices_, vertices_grad, self.conf)
+                loss = losses.cal_vg_loss(point_gt, normal_gt, curvature_surface, generated_vertices_, vertices_grad, self.conf)
 
             self.optimizer.zero_grad()
-            loss.backward(retain_graph=True)
-            self.optimizer.step()
+            self.scaler.scale(loss).backward(retain_graph=True)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
             self.iter_step += 1
             if self.iter_step % self.report_freq == 0:
@@ -253,6 +259,8 @@ class Runner:
         
 if __name__ == '__main__':
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
+    torch.backends.cudnn.benchmark = True
+    torch.set_float32_matmul_precision('high')
     parser = argparse.ArgumentParser()
     parser.add_argument('--conf', type=str, default='./confs/vg.conf')
     parser.add_argument('--mode', type=str, default='train')
@@ -268,16 +276,19 @@ if __name__ == '__main__':
 
     setup_seed(266815867)
     torch.cuda.set_device(args.gpu)
-    runner = Runner(args, args.conf, args.mode, args.checkpoint_name)
+    try:
+        runner = Runner(args, args.conf, args.mode, args.checkpoint_name)
 
-    if args.mode == 'train':
-        runner.train()
-    elif args.mode == "validate_mesh_delaunay":
-        threshs = [0.0]
-        # threshs = [0.001]
-        for thresh in threshs:
-            generated_points = runner.move2surface(torch.tensor(runner.generated_points).cuda(), thresh, step=10)
-            runner.generated_points = generated_points.detach().cpu().numpy()
-            runner.validate_delaunay_mesh(thresh, k_samples=runner.k_samples, real_world=True)
-    elif args.mode == "validate_fps":
-        runner.validate_fps(real_world=True)
+        if args.mode == 'train':
+            runner.train()
+        elif args.mode == "validate_mesh_delaunay":
+            threshs = [0.0]
+            # threshs = [0.001]
+            for thresh in threshs:
+                generated_points = runner.move2surface(torch.tensor(runner.generated_points).cuda(), thresh, step=10)
+                runner.generated_points = generated_points.detach().cpu().numpy()
+                runner.validate_delaunay_mesh(thresh, k_samples=runner.k_samples, real_world=True)
+        elif args.mode == "validate_fps":
+            runner.validate_fps(real_world=True)
+    except Exception:
+        sys.exit(1)
