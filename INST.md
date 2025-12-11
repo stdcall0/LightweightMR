@@ -46,8 +46,6 @@ ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /environment/miniconda3/lib/libs
 source scripts/run_sdf.sh
 source scripts/run_vg.sh
 
-# Run eval (without optimizations)
-# remember to delete generated things
-OPT_PERF=off source scripts/run_sdf.sh
-OPT_PERF=off source scripts/run_vg.sh
+# Debug
+python run_sdf.py --conf ./confs/sdf.conf --mode train --subdatadir SDF --datadir ./example/data/ --expdir ./example/exp/ --dataname 47984 --gpu 0
 ```
