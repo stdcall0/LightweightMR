@@ -5,7 +5,7 @@ conda create -n LMR python=3.9
 conda activate LMR
 
 pip install torch
-pip install pymcubes trimesh open3d fpsample cython pyhocon timm
+pip install pymcubes trimesh open3d fpsample cython pyhocon timm cachetools
 pip install torch_scatter -f https://data.pyg.org/whl/torch-2.8.0+cu128.html
 pip install spconv-cu126
 
