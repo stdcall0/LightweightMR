@@ -9,7 +9,7 @@ run_with_timing() {
     local desc="$1"; shift
     local start=$(date +%s)
     /usr/bin/env time -f "[time] %e s elapsed | CPU %P | MaxRSS %M KB" "$@"
-    local status=$?
+    status=$?
     local end=$(date +%s)
     echo "[wall] ${desc} took $((end-start)) s (exit $status)"
     return $status

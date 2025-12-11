@@ -37,7 +37,9 @@ cmake .
 make
 cd ../../..
 conda activate LMR
+conda install -c conda-forge libstdcxx-ng
 
-# Run eval
+# Run eval (with measurements)
 source scripts/run_sdf.sh
+source scripts/run_vg.sh
 ```
