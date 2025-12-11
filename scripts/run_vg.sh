@@ -21,7 +21,7 @@ run_with_timing() {
 for SCAN in "47984" "44234" "354371"; do
     CONF="./confs/vg.conf"
     run_with_timing "vg-train $SCAN" python run_vg.py --conf $CONF --mode train --sdf_subdatadir $SDF_SUBDATADIR --sdf_checkpoint_name $SDF_CHECKPOINT \
-    --datadir $DATA_DIR --expdir $EXP_DIR --dataname $SCAN --subdatadir $SUBDATADIR --gpu $GPU_IDX --opt_perf $OPT_PERF
+    --datadir $DATA_DIR --expdir $EXP_DIR --dataname $SCAN --subdatadir $SUBDATADIR --gpu $GPU_IDX
     run_with_timing "vg-validate $SCAN" python run_vg.py --conf $CONF --mode validate_mesh_delaunay --sdf_subdatadir $SDF_SUBDATADIR --sdf_checkpoint_name $SDF_CHECKPOINT \
-    --datadir $DATA_DIR --expdir $EXP_DIR --dataname $SCAN --subdatadir $SUBDATADIR --gpu $GPU_IDX --checkpoint_name $VG_CHECKPOINT --opt_perf $OPT_PERF
+    --datadir $DATA_DIR --expdir $EXP_DIR --dataname $SCAN --subdatadir $SUBDATADIR --gpu $GPU_IDX --checkpoint_name $VG_CHECKPOINT
 done
