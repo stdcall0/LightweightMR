@@ -9,10 +9,10 @@ run_with_timing() {
     local desc="$1"; shift
     local start=$(date +%s)
     /usr/bin/env time -f "[time] %e s elapsed | CPU %P | MaxRSS %M KB" "$@"
-    status=$?
+    exit_code=$?
     local end=$(date +%s)
-    echo "[wall] ${desc} took $((end-start)) s (exit $status)"
-    return $status
+    echo "[wall] ${desc} took $((end-start)) s (exit $exit_code)"
+    return $exit_code
 }
 
 for SCAN in "47984" "44234" "354371"; do
