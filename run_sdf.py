@@ -75,6 +75,10 @@ class Runner:
         self.logger = logger
         batch_size = self.batch_size
 
+        # Track peak CUDA memory for this run.
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats(self.device)
+
         loss_w = self.conf.get_list("train.loss_weight")
         model_type = self.conf.get("dataset.type")
         res_step = self.maxiter - self.iter_step
@@ -138,6 +142,12 @@ class Runner:
         except Exception as exc:
             print_log(f"Fatal error at iter {self.iter_step}: {exc}", logger=logger)
             raise
+        finally:
+            if torch.cuda.is_available():
+                peak_bytes = torch.cuda.max_memory_allocated(self.device)
+                peak_reserved = torch.cuda.max_memory_reserved(self.device)
+                msg = f"Peak CUDA memory — allocated: {peak_bytes/1024/1024:.2f} MiB, reserved: {peak_reserved/1024/1024:.2f} MiB"
+                print_log(msg, logger=logger if 'logger' in locals() else None)
 
     def validate_gradient(self, real_world=True, sdf_level=0.):
         N = 500_000

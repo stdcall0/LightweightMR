@@ -91,6 +91,10 @@ class Runner:
         print("vertices generation ", self.batch_size)
         batch_size = self.batch_size[0]
 
+        # Track peak CUDA memory for this run.
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats(self.device)
+
         # cal curvature and normal
         point_gt = self.dataset_np.get_surface_queries(self.conf, self.sdf_network, self.sdf_iter_step)
         sample_points = self.dataset_np.fps_select_vertices(point_gt, batch_size)
@@ -163,6 +167,13 @@ class Runner:
                     torch.cuda.empty_cache()
                     name = os.path.join(curvature_dir, '{:0>8d}_newadd.ply'.format(self.iter_step))
                     visualization.visible_points_curvature(sample_points.detach().cpu(), sample_curvature.detach().cpu(), name)
+
+                # Log peak CUDA memory usage.
+                if torch.cuda.is_available():
+                    peak_bytes = torch.cuda.max_memory_allocated(self.device)
+                    peak_reserved = torch.cuda.max_memory_reserved(self.device)
+                    msg = f"Peak CUDA memory — allocated: {peak_bytes/1024/1024:.2f} MiB, reserved: {peak_reserved/1024/1024:.2f} MiB"
+                    print_log(msg, logger=logger if 'logger' in locals() else None)
 
     def move2surface(self, generated_vertices, sdf_level, step=10):
         for i in range(step):

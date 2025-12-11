@@ -6,11 +6,22 @@ VG_CHECKPOINT=ckpt_008000.pth
 
 DATA_DIR=./example/data/
 EXP_DIR=./example/exp/
+
+run_with_timing() {
+    local desc="$1"; shift
+    local start=$(date +%s)
+    /usr/bin/env time -f "[time] %e s elapsed | CPU %P | MaxRSS %M KB" "$@"
+    local status=$?
+    local end=$(date +%s)
+    echo "[wall] ${desc} took $((end-start)) s (exit $status)"
+    return $status
+}
+
 for SCAN in "47984" "44234" "354371"
 do
     CONF="./confs/vg.conf"
-    python run_vg.py --conf $CONF --mode train --sdf_subdatadir $SDF_SUBDATADIR --sdf_checkpoint_name $SDF_CHECKPOINT \
+    run_with_timing "vg-train $SCAN" python run_vg.py --conf $CONF --mode train --sdf_subdatadir $SDF_SUBDATADIR --sdf_checkpoint_name $SDF_CHECKPOINT \
     --datadir $DATA_DIR --expdir $EXP_DIR --dataname $SCAN --subdatadir $SUBDATADIR --gpu $GPU_IDX
-    python run_vg.py --conf $CONF --mode validate_mesh_delaunay --sdf_subdatadir $SDF_SUBDATADIR --sdf_checkpoint_name $SDF_CHECKPOINT \
+    run_with_timing "vg-validate $SCAN" python run_vg.py --conf $CONF --mode validate_mesh_delaunay --sdf_subdatadir $SDF_SUBDATADIR --sdf_checkpoint_name $SDF_CHECKPOINT \
     --datadir $DATA_DIR --expdir $EXP_DIR --dataname $SCAN --subdatadir $SUBDATADIR --gpu $GPU_IDX --checkpoint_name $VG_CHECKPOINT
 done
