@@ -21,7 +21,9 @@ class SDFNetwork(nn.Module):
                  weight_norm=True,
                  use_plane_feature=False,
                  use_grid_feature=False,
-                 inside_outside=False):
+                 inside_outside=False,
+                 use_point_transformer=False,
+                 point_transformer_grid_size=0.01):
         super(SDFNetwork, self).__init__()
 
         use_weight_norm_flag = weight_norm
@@ -34,6 +36,7 @@ class SDFNetwork(nn.Module):
             self.embed_fn_fine = embed_fn
             dims[0] = int(input_ch)
 
+        # Point transformer branch was removed; keep flags for config compatibility.
         self.use_grid_feature = use_grid_feature
         if self.use_grid_feature:
             self.grid_encoding = Hash_grid(point_size=point_size, use_pro=True)
