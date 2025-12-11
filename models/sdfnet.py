@@ -1,7 +1,7 @@
 from typing import List
 import torch
 import torch.nn as nn
-from torch.nn.utils.weight_norm import weight_norm
+from torch.nn.utils.weight_norm import weight_norm as weight_norm_fn
 import numpy as np
 from models.modules.embedder import get_embedder
 from models.modules.triplane import Hash_triplane, Hash_grid
@@ -26,6 +26,7 @@ class SDFNetwork(nn.Module):
                  point_transformer_grid_size=0.01):
         super(SDFNetwork, self).__init__()
 
+        # Avoid shadowing torch.nn.utils.weight_norm
         use_weight_norm_flag = weight_norm
 
         dims: List[int] = [d_in] + [d_hidden for _ in range(n_layers)] + [d_out]
@@ -81,7 +82,7 @@ class SDFNetwork(nn.Module):
                     torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
 
             if use_weight_norm_flag:
-                lin = weight_norm(lin)
+                lin = weight_norm_fn(lin)
             setattr(self, "lin" + str(l), lin)
             
         self.activation = nn.ReLU()
