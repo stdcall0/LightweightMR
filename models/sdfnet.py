@@ -1,5 +1,7 @@
+from typing import List
 import torch
 import torch.nn as nn
+from torch.nn.utils.weight_norm import weight_norm
 import numpy as np
 from models.modules.embedder import get_embedder
 from models.modules.triplane import Hash_triplane, Hash_grid
@@ -19,38 +21,18 @@ class SDFNetwork(nn.Module):
                  weight_norm=True,
                  use_plane_feature=False,
                  use_grid_feature=False,
-                 use_point_transformer=False,
-                 point_transformer_grid_size=0.01,
                  inside_outside=False):
         super(SDFNetwork, self).__init__()
 
-        dims = [d_in] + [d_hidden for _ in range(n_layers)] + [d_out]
+        use_weight_norm_flag = weight_norm
+
+        dims: List[int] = [d_in] + [d_hidden for _ in range(n_layers)] + [d_out]
 
         self.embed_fn_fine = None
         if multires > 0:
             embed_fn, input_ch = get_embedder(multires, input_dims=d_in)
             self.embed_fn_fine = embed_fn
-            dims[0] = input_ch
-
-        base_feat_dim = dims[0]
-
-        self.coord_dim = d_in
-        self.use_point_transformer = use_point_transformer
-        self.point_transformer_grid_size = point_transformer_grid_size
-        self.point_transformer_out_dim = 0
-        if self.use_point_transformer:
-            try:
-                from models.modules.PointTransformerv3 import PointTransformerV3
-            except ImportError as err:
-                raise ImportError(
-                    "PointTransformerV3 requires spconv/flash-attn dependencies. "
-                    "Install them or set use_point_transformer=False."
-                ) from err
-
-            pt_in_channels = base_feat_dim + d_in
-            self.point_transformer = PointTransformerV3(in_channels=pt_in_channels)
-            self.point_transformer_out_dim = 64
-            dims[0] += self.point_transformer_out_dim
+            dims[0] = int(input_ch)
 
         self.use_grid_feature = use_grid_feature
         if self.use_grid_feature:
@@ -61,7 +43,7 @@ class SDFNetwork(nn.Module):
             self.plane_encoding = Hash_triplane(point_size=point_size, multires=multires, use_pro=True)
 
         if self.use_grid_feature or self.use_plane_feature:
-            dims[0] += 16*2
+            dims[0] = int(dims[0] + 16 * 2)
 
         self.num_layers = len(dims)
         self.skip_in = skip_in
@@ -95,76 +77,35 @@ class SDFNetwork(nn.Module):
                     torch.nn.init.constant_(lin.bias, 0.0)
                     torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
 
-            if weight_norm:
-                lin = nn.utils.weight_norm(lin)
+            if use_weight_norm_flag:
+                lin = weight_norm(lin)
             setattr(self, "lin" + str(l), lin)
             
         self.activation = nn.ReLU()
 
     def forward(self, inputs, step):
-        scaled_inputs = inputs * self.scale
+        inputs = inputs * self.scale
+        feature = None
 
         if self.embed_fn_fine is not None:
-            embedded_inputs = self.embed_fn_fine(scaled_inputs)
-        else:
-            embedded_inputs = scaled_inputs
+            inputs = self.embed_fn_fine(inputs)
 
-        if self.use_point_transformer:
-            # Skip transformer when point count is too small (spconv may fail to tune/launch)
-            if scaled_inputs.shape[0] < 4:
-                pass
-            else:
-                pt_coord = scaled_inputs.detach()
-
-                # Sanitize coords/features to avoid spconv/BN crashes (NaN/Inf/overflow)
-                pt_coord = torch.nan_to_num(pt_coord, nan=0.0, posinf=10.0, neginf=-10.0)
-                pt_coord = torch.clamp(pt_coord, min=-1000.0, max=1000.0)
-
-                pt_feats_in = torch.cat((pt_coord, embedded_inputs.detach()), dim=-1)
-                pt_feats_in = torch.nan_to_num(pt_feats_in, nan=0.0, posinf=1.0, neginf=-1.0)
-
-                point_dict = {
-                    'coord': pt_coord,
-                    'grid_size': self.point_transformer_grid_size,
-                    'offset': scaled_inputs.new_tensor([scaled_inputs.shape[0]], dtype=torch.long),
-                    'feat': pt_feats_in,
-                }
-
-                # Force PointTransformer into eval to freeze BN when point count is small
-                was_training = self.point_transformer.training
-                if was_training:
-                    self.point_transformer.eval()
-
-                try:
-                    transformer_out = self.point_transformer(point_dict)
-                    embedded_inputs = torch.cat((embedded_inputs, transformer_out['feat']), dim=-1)
-                except RuntimeError as err:
-                    # If spconv cannot find an algorithm (often when too few/degenerate points), skip transformer
-                    if "ConvTunerSimple_tune_and_cache" in str(err) or "can't find suitable algorithm" in str(err):
-                        pass
-                    else:
-                        if was_training:
-                            self.point_transformer.train()
-                        raise
-
-                if was_training:
-                    self.point_transformer.train()
-
-        feature = None
         if self.use_plane_feature:
-            feature = self.plane_encoding(scaled_inputs, step) if feature is None else feature + self.plane_encoding(scaled_inputs, step)
+            feat_plane = self.plane_encoding(inputs[...,:3], step)
+            feature = feat_plane if feature is None else feature + feat_plane
 
         if self.use_grid_feature:
-            feature = self.grid_encoding(scaled_inputs, step) if feature is None else feature + self.grid_encoding(scaled_inputs, step)
+            feat_grid = self.grid_encoding(inputs[...,:3], step)
+            feature = feat_grid if feature is None else feature + feat_grid
 
         if feature is not None:
-            embedded_inputs = torch.cat((embedded_inputs, feature), dim=-1)
+            inputs = torch.cat((inputs, feature), dim=-1)
 
-        x = embedded_inputs
+        x = inputs
         for l in range(0, self.num_layers - 1):
             lin = getattr(self, "lin" + str(l))
             if l in self.skip_in:
-                x = torch.cat([x, embedded_inputs], 1) / np.sqrt(2)
+                x = torch.cat([x, inputs], 1) / np.sqrt(2)
 
             x = lin(x)
             if l < self.num_layers - 2:
