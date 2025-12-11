@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import os
-import os
 import time
 import sys
 import torch
@@ -257,6 +256,16 @@ class Runner:
         torch.save(checkpoint, os.path.join(self.base_exp_dir, 'vg_checkpoints', 'ckpt_{:0>6d}.pth'.format(self.iter_step)))
     
         
+def _pick_device(requested: int) -> int:
+    """Validate GPU index and fallback to 0 with a clear error when invalid."""
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is not available; please use a GPU environment or set --gpu -1 for CPU mode (not supported here).")
+    count = torch.cuda.device_count()
+    if requested < 0 or requested >= count:
+        raise RuntimeError(f"Invalid GPU index {requested}. Available CUDA devices: 0..{count-1}.")
+    return requested
+
+
 if __name__ == '__main__':
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
     torch.backends.cudnn.benchmark = True
@@ -275,7 +284,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     setup_seed(266815867)
-    torch.cuda.set_device(args.gpu)
+    gpu_index = _pick_device(args.gpu)
+    print(f"Using CUDA device {gpu_index} / {torch.cuda.device_count()-1}")
+    torch.cuda.set_device(gpu_index)
     try:
         runner = Runner(args, args.conf, args.mode, args.checkpoint_name)
 
