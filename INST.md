@@ -42,7 +42,12 @@ conda activate LMR
 #conda install -c conda-forge libstdcxx-ng
 ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /environment/miniconda3/lib/libstdc++.so.6
 
-# Run eval (with measurements)
+# Run eval (with optimizations)
 source scripts/run_sdf.sh
 source scripts/run_vg.sh
+
+# Run eval (without optimizations)
+# remember to delete generated things
+OPT_PERF=off source scripts/run_sdf.sh
+OPT_PERF=off source scripts/run_vg.sh
 ```
